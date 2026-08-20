@@ -1,0 +1,4 @@
+google-genai
+pillow
+pydantic>=2
+python-dotenv

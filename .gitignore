@@ -1,0 +1,5 @@
+watch_images/
+.env
+.venv/
+__pycache__/
+*.py[cod]
