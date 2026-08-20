@@ -1,4 +1,4 @@
-# ChronoDesk watch recognition spike
+# WatchFinder
 
 This is a small quality-gate script for testing whether Gemini can extract
 useful evidence and identify plausible watch candidates from a photograph.
