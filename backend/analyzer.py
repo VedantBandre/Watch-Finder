@@ -13,6 +13,7 @@ from backend.models import WatchAnalysis
 
 DEFAULT_MODEL = "gemini-3.7-flash"
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
+PROMPT_VERSION = "1"
 SUPPORTED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
 
 

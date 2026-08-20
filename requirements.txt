@@ -1,4 +1,7 @@
+fastapi
 google-genai
 pillow
 pydantic>=2
 python-dotenv
+python-multipart
+uvicorn[standard]
