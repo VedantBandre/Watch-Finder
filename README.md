@@ -1,4 +1,4 @@
-# Watch Finder
+# WatchFinder
 
 A small, evidence-first watch identification tool built for the ChronoDesk
 take-home exercise. Drop in a photograph and it returns visible observations,
