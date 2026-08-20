@@ -143,12 +143,12 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             response = await self.client.post(
                 "/api/analyze",
                 files={"image": ("watch.jpg", sample_image(), "image/jpeg")},
-                data={"model": "gemini-2.5-flash"},
+                data={"model": "gemini-3.5-flash"},
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["model"]["used"], "gemini-2.5-flash")
-        self.assertEqual(analyze.call_args.kwargs["model"], "gemini-2.5-flash")
+        self.assertEqual(response.json()["model"]["used"], "gemini-3.5-flash")
+        self.assertEqual(analyze.call_args.kwargs["model"], "gemini-3.5-flash")
 
     async def test_unknown_model_is_rejected(self) -> None:
         response = await self.client.post(
@@ -210,7 +210,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 429)
         self.assertEqual(response.headers["Retry-After"], "25")
         self.assertEqual(response.json()["error"]["retryAfterSeconds"], 25)
-        self.assertEqual(len(response.json()["error"]["unavailable"]), 4)
+        self.assertEqual(len(response.json()["error"]["unavailable"]), 3)
 
     async def test_rate_limit_without_retry_delay(self) -> None:
         error = errors.ClientError(
@@ -232,7 +232,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 429)
         self.assertNotIn("Retry-After", response.headers)
         self.assertNotIn("retryAfterSeconds", response.json()["error"])
-        self.assertEqual(len(response.json()["error"]["unavailable"]), 4)
+        self.assertEqual(len(response.json()["error"]["unavailable"]), 3)
 
 
 if __name__ == "__main__":
