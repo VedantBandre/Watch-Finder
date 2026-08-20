@@ -7,22 +7,30 @@ import logging
 import math
 import os
 import re
+import time
 from collections import OrderedDict
 from threading import Lock
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Response, UploadFile
+from fastapi import FastAPI, File, Form, Response, UploadFile
 from fastapi.responses import JSONResponse
 from google.genai import errors
 from pydantic import ValidationError
 
 from backend.analyzer import (
-    DEFAULT_MODEL,
     MAX_IMAGE_BYTES,
     PROMPT_VERSION,
     analyze_image,
 )
-from backend.models import WatchAnalysis
+from backend.model_registry import AUTO_MODEL, MODEL_BY_ID, MODEL_OPTIONS
+from backend.models import (
+    AnalysisModelMetadata,
+    AnalyzeResponse,
+    ModelOptionStatus,
+    ModelsResponse,
+    UnavailableModel,
+    WatchAnalysis,
+)
 
 
 load_dotenv()
@@ -67,6 +75,53 @@ class AnalysisCache:
 analysis_cache = AnalysisCache(max_size=32)
 
 
+class ModelAvailability:
+    """Track quota-limited models for the lifetime of this backend process."""
+
+    def __init__(self) -> None:
+        self._blocked_until: dict[str, float | None] = {}
+        self._lock = Lock()
+
+    def mark_unavailable(self, model: str, retry_after_seconds: int | None) -> None:
+        blocked_until = (
+            time.monotonic() + retry_after_seconds
+            if retry_after_seconds is not None
+            else None
+        )
+        with self._lock:
+            self._blocked_until[model] = blocked_until
+
+    def mark_available(self, model: str) -> None:
+        with self._lock:
+            self._blocked_until.pop(model, None)
+
+    def snapshot(self) -> dict[str, int | None]:
+        now = time.monotonic()
+        with self._lock:
+            expired = [
+                model
+                for model, blocked_until in self._blocked_until.items()
+                if blocked_until is not None and blocked_until <= now
+            ]
+            for model in expired:
+                self._blocked_until.pop(model)
+            return {
+                model: (
+                    None
+                    if blocked_until is None
+                    else max(1, math.ceil(blocked_until - now))
+                )
+                for model, blocked_until in self._blocked_until.items()
+            }
+
+    def clear(self) -> None:
+        with self._lock:
+            self._blocked_until.clear()
+
+
+model_availability = ModelAvailability()
+
+
 def _cache_key(image_bytes: bytes, model: str) -> str:
     digest = hashlib.sha256()
     digest.update(image_bytes)
@@ -91,12 +146,17 @@ def _error_response(
     code: str,
     message: str,
     retry_after_seconds: int | None = None,
+    unavailable: list[UnavailableModel] | None = None,
 ) -> JSONResponse:
-    error: dict[str, str | int] = {"code": code, "message": message}
+    error: dict[str, object] = {"code": code, "message": message}
     headers: dict[str, str] = {}
     if retry_after_seconds is not None:
         error["retryAfterSeconds"] = retry_after_seconds
         headers["Retry-After"] = str(retry_after_seconds)
+    if unavailable is not None:
+        error["unavailable"] = [
+            item.model_dump(by_alias=True, exclude_none=True) for item in unavailable
+        ]
     return JSONResponse(
         status_code=status_code,
         content={"error": error},
@@ -109,8 +169,65 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/analyze", response_model=WatchAnalysis)
-def analyze_watch(response: Response, image: UploadFile = File(...)):
+def _unavailable_models() -> list[UnavailableModel]:
+    unavailable = model_availability.snapshot()
+    return [
+        UnavailableModel(id=option.id, retry_after_seconds=unavailable[option.id])
+        for option in MODEL_OPTIONS
+        if option.id in unavailable
+    ]
+
+
+@app.get("/api/models", response_model=ModelsResponse, response_model_exclude_none=True)
+def models() -> ModelsResponse:
+    unavailable = model_availability.snapshot()
+    return ModelsResponse(
+        default=AUTO_MODEL,
+        models=[
+            ModelOptionStatus(
+                id=option.id,
+                label=option.label,
+                priority=option.priority,
+                available=option.id not in unavailable,
+                retry_after_seconds=unavailable.get(option.id),
+            )
+            for option in MODEL_OPTIONS
+        ],
+    )
+
+
+def _success_response(
+    analysis: WatchAnalysis,
+    requested: str,
+    used: str,
+) -> AnalyzeResponse:
+    return AnalyzeResponse(
+        analysis=analysis,
+        model=AnalysisModelMetadata(
+            requested=requested,
+            used=used,
+            unavailable=_unavailable_models(),
+        ),
+    )
+
+
+@app.post(
+    "/api/analyze",
+    response_model=AnalyzeResponse,
+    response_model_exclude_none=True,
+)
+def analyze_watch(
+    response: Response,
+    image: UploadFile = File(...),
+    model: str = Form(AUTO_MODEL),
+):
+    if model != AUTO_MODEL and model not in MODEL_BY_ID:
+        return _error_response(
+            400,
+            "invalid_model",
+            "Choose Auto or one of the supported Gemini models.",
+        )
+
     image_bytes = image.file.read(MAX_IMAGE_BYTES + 1)
     if len(image_bytes) > MAX_IMAGE_BYTES:
         return _error_response(
@@ -127,55 +244,87 @@ def analyze_watch(response: Response, image: UploadFile = File(...)):
             "The analysis service is not configured.",
         )
 
-    model = os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
-    key = _cache_key(image_bytes, model)
-    cached = analysis_cache.get(key)
-    if cached is not None:
-        response.headers["X-Cache"] = "HIT"
-        return cached
+    requested_models = (
+        [option.id for option in MODEL_OPTIONS]
+        if model == AUTO_MODEL
+        else [model]
+    )
+    blocked = model_availability.snapshot()
+    available_models = [item for item in requested_models if item not in blocked]
 
-    try:
-        result = analyze_image(image_bytes, model=model)
-    except ValueError as exc:
-        return _error_response(400, "invalid_image", str(exc))
-    except ValidationError:
-        logger.exception("Gemini returned an invalid structured response")
-        return _error_response(
-            502,
-            "invalid_model_response",
-            "The analysis service returned an invalid response.",
-        )
-    except errors.ClientError as exc:
-        if exc.code == 429:
-            retry_after = _retry_after_seconds(exc.message)
-            logger.warning("Gemini rate limit reached; retry after %s", retry_after)
+    for candidate_model in available_models:
+        cached = analysis_cache.get(_cache_key(image_bytes, candidate_model))
+        if cached is not None:
+            response.headers["X-Cache"] = "HIT"
+            return _success_response(cached, model, candidate_model)
+
+    for candidate_model in available_models:
+        try:
+            result = analyze_image(image_bytes, model=candidate_model)
+        except ValueError as exc:
+            return _error_response(400, "invalid_image", str(exc))
+        except ValidationError:
+            logger.exception("Gemini returned an invalid structured response")
             return _error_response(
-                429,
-                "rate_limited",
-                "Gemini's free quota is temporarily busy.",
-                retry_after_seconds=retry_after,
+                502,
+                "invalid_model_response",
+                "The analysis service returned an invalid response.",
             )
-        logger.exception("Gemini rejected the analysis request")
-        return _error_response(
-            502,
-            "analysis_service_error",
-            "The analysis service could not process the image.",
-        )
-    except errors.ServerError:
-        logger.exception("Gemini service error")
-        return _error_response(
-            502,
-            "analysis_service_error",
-            "The analysis service is temporarily unavailable.",
-        )
-    except Exception:
-        logger.exception("Unexpected watch analysis failure")
-        return _error_response(
-            500,
-            "internal_error",
-            "An unexpected error occurred while analyzing the image.",
-        )
+        except errors.ClientError as exc:
+            if exc.code == 429:
+                retry_after = _retry_after_seconds(exc.message)
+                model_availability.mark_unavailable(candidate_model, retry_after)
+                logger.warning(
+                    "Gemini model %s reached its quota; retry after %s",
+                    candidate_model,
+                    retry_after,
+                )
+                if model == AUTO_MODEL:
+                    continue
+                unavailable = _unavailable_models()
+                return _error_response(
+                    429,
+                    "rate_limited",
+                    "The selected Gemini model has reached its free quota.",
+                    retry_after_seconds=retry_after,
+                    unavailable=unavailable,
+                )
+            logger.exception("Gemini rejected the analysis request")
+            return _error_response(
+                502,
+                "analysis_service_error",
+                "The analysis service could not process the image.",
+            )
+        except errors.ServerError:
+            logger.exception("Gemini service error")
+            return _error_response(
+                502,
+                "analysis_service_error",
+                "The analysis service is temporarily unavailable.",
+            )
+        except Exception:
+            logger.exception("Unexpected watch analysis failure")
+            return _error_response(
+                500,
+                "internal_error",
+                "An unexpected error occurred while analyzing the image.",
+            )
 
-    analysis_cache.set(key, result)
-    response.headers["X-Cache"] = "MISS"
-    return result
+        model_availability.mark_available(candidate_model)
+        analysis_cache.set(_cache_key(image_bytes, candidate_model), result)
+        response.headers["X-Cache"] = "MISS"
+        return _success_response(result, model, candidate_model)
+
+    unavailable = _unavailable_models()
+    retry_delays = [
+        item.retry_after_seconds
+        for item in unavailable
+        if item.retry_after_seconds is not None
+    ]
+    return _error_response(
+        429,
+        "rate_limited",
+        "All available Gemini models have reached their free quota.",
+        retry_after_seconds=min(retry_delays) if retry_delays else None,
+        unavailable=unavailable,
+    )

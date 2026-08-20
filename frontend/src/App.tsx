@@ -6,10 +6,13 @@ import {
   type ReactNode,
 } from "react";
 
-import { analyzeWatch, WatchApiError } from "./api";
+import { analyzeWatch, getModels, WatchApiError } from "./api";
 import type {
+  AnalysisModelMetadata,
   Candidate,
   IdentificationAssessment,
+  ModelOption,
+  ModelUnavailable,
   Observations,
   WatchAnalysis,
 } from "./types";
@@ -121,9 +124,19 @@ function DetailGrid({ observations }: { observations: Observations }) {
   );
 }
 
-function Results({ analysis }: { analysis: WatchAnalysis }) {
+function Results({
+  analysis,
+  model,
+  models,
+}: {
+  analysis: WatchAnalysis;
+  model: AnalysisModelMetadata;
+  models: ModelOption[];
+}) {
   const bestMatch = analysis.candidates[0];
   const alternatives = analysis.candidates.slice(1);
+  const usedLabel = models.find((option) => option.id === model.used)?.label ?? model.used;
+  const fellBack = model.requested === "auto" && Boolean(models[0]) && model.used !== models[0].id;
 
   if (!analysis.is_watch) {
     return (
@@ -140,6 +153,11 @@ function Results({ analysis }: { analysis: WatchAnalysis }) {
       <div className="results-heading">
         <p className="eyebrow">Analysis complete</p>
         <h1>Most likely match</h1>
+      </div>
+
+      <div className={`model-disclosure${fellBack ? " model-disclosure--fallback" : ""}`}>
+        <strong>Analyzed with {usedLabel}</strong>
+        {fellBack && <span>Auto switched models after a quota limit.</span>}
       </div>
 
       {bestMatch ? (
@@ -190,11 +208,31 @@ export default function App() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [state, setState] = useState<RequestState>("idle");
   const [analysis, setAnalysis] = useState<WatchAnalysis | null>(null);
+  const [analysisModel, setAnalysisModel] = useState<AnalysisModelMetadata | null>(null);
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [selectedModel, setSelectedModel] = useState("auto");
+  const [unavailable, setUnavailable] = useState<Record<string, number | null>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [retrySeconds, setRetrySeconds] = useState<number | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    getModels()
+      .then((result) => {
+        setModels(result.models);
+        setSelectedModel(result.default);
+        setUnavailable(Object.fromEntries(
+          result.models
+            .filter((option) => !option.available)
+            .map((option) => [option.id, option.retryAfterSeconds ?? null]),
+        ));
+      })
+      .catch(() => {
+        // Analysis remains usable with Auto if the status endpoint is unavailable.
+      });
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -220,6 +258,29 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [state, retrySeconds]);
 
+  useEffect(() => {
+    if (!Object.values(unavailable).some((seconds) => seconds !== null && seconds > 0)) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setUnavailable((current) => {
+        const next: Record<string, number | null> = {};
+        for (const [id, seconds] of Object.entries(current)) {
+          if (seconds === null) next[id] = null;
+          else if (seconds > 1) next[id] = seconds - 1;
+        }
+        return next;
+      });
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [unavailable]);
+
+  function applyUnavailable(items: ModelUnavailable[]) {
+    setUnavailable(Object.fromEntries(
+      items.map((item) => [item.id, item.retryAfterSeconds ?? null]),
+    ));
+  }
+
   function selectFile(nextFile: File) {
     requestRef.current?.abort();
 
@@ -237,6 +298,7 @@ export default function App() {
     setFile(nextFile);
     setPreviewUrl(URL.createObjectURL(nextFile));
     setAnalysis(null);
+    setAnalysisModel(null);
     setMessage(null);
     setRetrySeconds(null);
     setState("selected");
@@ -264,8 +326,10 @@ export default function App() {
     setRetrySeconds(null);
 
     try {
-      const result = await analyzeWatch(file, controller.signal);
-      setAnalysis(result);
+      const result = await analyzeWatch(file, selectedModel, controller.signal);
+      setAnalysis(result.analysis);
+      setAnalysisModel(result.model);
+      applyUnavailable(result.model.unavailable);
       setState("success");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
@@ -273,6 +337,7 @@ export default function App() {
       }
       if (error instanceof WatchApiError) {
         setMessage(error.message);
+        applyUnavailable(error.unavailable);
         if (error.code === "rate_limited") {
           setRetrySeconds(error.retryAfterSeconds ?? null);
           setState("rate-limited");
@@ -291,6 +356,19 @@ export default function App() {
   }
 
   const retryDisabled = retrySeconds !== null && retrySeconds > 0;
+  const allModelsUnavailable = models.length > 0 && models.every((option) => option.id in unavailable);
+  const selectedUnavailable = selectedModel === "auto"
+    ? allModelsUnavailable
+    : selectedModel in unavailable;
+
+  function chooseModel(model: string) {
+    setSelectedModel(model);
+    if (state === "rate-limited") {
+      setState(file ? "selected" : "idle");
+      setMessage(null);
+      setRetrySeconds(null);
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -356,10 +434,46 @@ export default function App() {
               }}
             />
 
+            {file && (
+              <div className="model-selector">
+                <div className="model-selector-heading">
+                  <strong>Analysis model</strong>
+                  <span>Auto falls back only when quota is exhausted.</span>
+                </div>
+                <div className="model-options" role="group" aria-label="Analysis model">
+                  <button
+                    className={`model-button${selectedModel === "auto" ? " model-button--selected" : ""}`}
+                    disabled={allModelsUnavailable}
+                    onClick={() => chooseModel("auto")}
+                    type="button"
+                  >
+                    <strong>Auto</strong>
+                    <span>Best available</span>
+                  </button>
+                  {models.map((option) => {
+                    const remaining = unavailable[option.id];
+                    const blocked = option.id in unavailable;
+                    return (
+                      <button
+                        className={`model-button${selectedModel === option.id ? " model-button--selected" : ""}`}
+                        disabled={blocked}
+                        key={option.id}
+                        onClick={() => chooseModel(option.id)}
+                        type="button"
+                      >
+                        <strong>{option.label}</strong>
+                        <span>{blocked ? (remaining === null ? "Quota reached" : `${remaining}s`) : `Priority ${option.priority}`}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {file && state !== "rate-limited" && (
               <button
                 className="button button--primary analyze-button"
-                disabled={state === "analyzing"}
+                disabled={state === "analyzing" || selectedUnavailable}
                 onClick={submitAnalysis}
               >
                 {state === "analyzing" ? <><span className="spinner" /> Inspecting details…</> : "Analyze watch"}
@@ -388,7 +502,9 @@ export default function App() {
             )}
           </section>
 
-          {analysis && <Results analysis={analysis} />}
+          {analysis && analysisModel && (
+            <Results analysis={analysis} model={analysisModel} models={models} />
+          )}
         </div>
       </main>
 

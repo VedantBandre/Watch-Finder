@@ -1,30 +1,48 @@
-import type { ApiErrorPayload, WatchAnalysis } from "./types";
+import type {
+  AnalyzeResponse,
+  ApiErrorPayload,
+  ModelsResponse,
+  ModelUnavailable,
+} from "./types";
 
 export class WatchApiError extends Error {
   readonly code: string;
   readonly status: number;
   readonly retryAfterSeconds?: number;
+  readonly unavailable: ModelUnavailable[];
 
   constructor(
     message: string,
     code: string,
     status: number,
     retryAfterSeconds?: number,
+    unavailable: ModelUnavailable[] = [],
   ) {
     super(message);
     this.name = "WatchApiError";
     this.code = code;
     this.status = status;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.unavailable = unavailable;
   }
+}
+
+export async function getModels(): Promise<ModelsResponse> {
+  const response = await fetch("/api/models");
+  if (!response.ok) {
+    throw new WatchApiError("Could not load model availability.", "request_failed", response.status);
+  }
+  return (await response.json()) as ModelsResponse;
 }
 
 export async function analyzeWatch(
   image: File,
+  model: string,
   signal?: AbortSignal,
-): Promise<WatchAnalysis> {
+): Promise<AnalyzeResponse> {
   const form = new FormData();
   form.append("image", image);
+  form.append("model", model);
 
   let response: Response;
   try {
@@ -57,8 +75,9 @@ export async function analyzeWatch(
       payload?.error.code ?? "request_failed",
       response.status,
       payload?.error.retryAfterSeconds,
+      payload?.error.unavailable,
     );
   }
 
-  return (await response.json()) as WatchAnalysis;
+  return (await response.json()) as AnalyzeResponse;
 }

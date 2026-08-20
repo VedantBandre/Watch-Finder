@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Observations(BaseModel):
@@ -53,3 +53,38 @@ class WatchAnalysis(BaseModel):
     caution: str = Field(
         description="Short warning about uncertainty or visually similar references."
     )
+
+
+class ApiModel(BaseModel):
+    """API-only base model with camelCase JSON aliases."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+
+class UnavailableModel(ApiModel):
+    id: str
+    retry_after_seconds: int | None = Field(default=None, alias="retryAfterSeconds")
+
+
+class AnalysisModelMetadata(ApiModel):
+    requested: str
+    used: str
+    unavailable: list[UnavailableModel]
+
+
+class AnalyzeResponse(ApiModel):
+    analysis: WatchAnalysis
+    model: AnalysisModelMetadata
+
+
+class ModelOptionStatus(ApiModel):
+    id: str
+    label: str
+    priority: int
+    available: bool
+    retry_after_seconds: int | None = Field(default=None, alias="retryAfterSeconds")
+
+
+class ModelsResponse(ApiModel):
+    default: str
+    models: list[ModelOptionStatus]

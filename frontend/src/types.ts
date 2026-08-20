@@ -36,10 +36,40 @@ export interface WatchAnalysis {
   caution: string;
 }
 
+export interface ModelUnavailable {
+  id: string;
+  retryAfterSeconds?: number;
+}
+
+export interface AnalysisModelMetadata {
+  requested: string;
+  used: string;
+  unavailable: ModelUnavailable[];
+}
+
+export interface AnalyzeResponse {
+  analysis: WatchAnalysis;
+  model: AnalysisModelMetadata;
+}
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  priority: number;
+  available: boolean;
+  retryAfterSeconds?: number;
+}
+
+export interface ModelsResponse {
+  default: string;
+  models: ModelOption[];
+}
+
 export interface ApiErrorPayload {
   error: {
     code: string;
     message: string;
     retryAfterSeconds?: number;
+    unavailable?: ModelUnavailable[];
   };
 }
