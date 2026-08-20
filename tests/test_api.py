@@ -181,6 +181,10 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "invalid_image")
+        self.assertEqual(
+            response.json()["error"]["message"],
+            "Could not read the image. Use a valid JPEG, PNG, or WebP file.",
+        )
 
     async def test_oversized_image(self) -> None:
         response = await self.client.post(
