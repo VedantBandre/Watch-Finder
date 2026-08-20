@@ -13,6 +13,7 @@ from backend.models import WatchAnalysis
 
 DEFAULT_MODEL = "gemini-3.7-flash"
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
+PROMPT_VERSION = "1"
 SUPPORTED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
 
 
@@ -59,7 +60,9 @@ def _decode_image(image_bytes: bytes) -> Image.Image:
     except ValueError:
         raise
     except (OSError, SyntaxError) as exc:
-        raise ValueError(f"Could not read the input as an image: {exc}") from exc
+        raise ValueError(
+            "Could not read the image. Use a valid JPEG, PNG, or WebP file."
+        ) from exc
 
 
 def _encode_jpeg(image: Image.Image, max_side: int) -> str:

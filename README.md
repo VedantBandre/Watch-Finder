@@ -1,22 +1,69 @@
 # WatchFinder
 
-This is a small quality-gate script for testing whether Gemini can extract
-useful evidence and identify plausible watch candidates from a photograph.
-It deliberately separates visible observations from inferred identification
-and allows the exact reference to remain unknown.
+A small, evidence-first watch identification tool built for the ChronoDesk
+take-home exercise. Drop in a photograph and it returns visible observations,
+likely brand/model candidates, reference confidence, unknowns, and the most
+useful next photograph.
 
-## Setup
+The application uses React, TypeScript, and Vite in the browser, with a
+FastAPI backend that keeps the Gemini API key private. Auto mode tries Gemini
+3.7 Flash first and falls back to 3.6 or 3.5 Flash only when a model reports a
+quota-limit error.
 
-Requires Python 3.10 or newer and a Gemini API key from Google AI Studio.
+## Run locally
+
+Requires Python 3.10 or newer, Node.js 20 or newer, npm, and a Gemini API key
+from Google AI Studio.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+npm --prefix frontend install
 cp .env.example .env
 ```
 
-Put your key in `.env`, then run:
+Add your key to `.env`:
+
+```text
+GEMINI_API_KEY=your-key-here
+```
+
+Start the complete application:
+
+```bash
+python dev.py
+```
+
+Then open [http://localhost:5173](http://localhost:5173). Press Ctrl-C in the
+terminal to stop both servers.
+
+## How it behaves
+
+- Accepts JPEG, PNG, and WebP images up to 20 MB.
+- Re-encodes images before sending them, so filenames and embedded metadata are
+  not used for identification.
+- Sends the full photograph and an optional center crop.
+- Separates visible evidence from inferred candidates.
+- Allows an exact reference to remain unresolved when the photograph cannot
+  distinguish it.
+- Caches successful results in memory to avoid spending quota on an identical
+  image/model combination.
+- Disables quota-limited models and shows Gemini's retry countdown when one is
+  supplied.
+
+The confidence assessment is split into:
+
+- Brand: `identified` or `uncertain`
+- Family: `identified`, `plausible`, or `uncertain`
+- Reference: `supported` or `unresolved`
+
+These labels describe the strength of visible evidence; they are not an
+authentication or valuation claim.
+
+## Command-line usage
+
+The original CLI remains available:
 
 ```bash
 python analyze_watch.py /absolute/path/to/watch.jpg
@@ -27,21 +74,19 @@ Useful options:
 ```bash
 python analyze_watch.py watch.jpg --raw
 python analyze_watch.py watch.jpg --no-crop
-python analyze_watch.py watch.jpg --model another-available-model
+python analyze_watch.py watch.jpg --model gemini-3.6-flash
 ```
 
-The response assesses the image at three separate levels without requiring
-additional input:
+## Tests
 
-- Brand: `identified` or `uncertain`
-- Family: `identified`, `plausible`, or `uncertain`
-- Reference: `supported` or `unresolved`
+The backend and launcher tests mock Gemini and do not consume API quota:
 
-These are evidence-strength labels, not claims of objective correctness.
-Determining whether a prediction was incorrect or hallucinated requires known
-ground truth and belongs in a separate benchmark rather than the user-facing
-analysis.
+```bash
+python -m unittest discover -v
+npm --prefix frontend run build
+```
 
-Test it with a clear watch, an obscure watch, and a difficult or blurry photo
-before building a UI around it. Free-tier availability and model access can
-vary by account.
+## Scope
+
+This is intentionally a local prototype: no login, database, persistent
+history, deployment, authentication claim, or price estimate.
