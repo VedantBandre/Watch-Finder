@@ -10,6 +10,10 @@ FastAPI backend that keeps the Gemini API key private. Auto mode tries Gemini
 3.7 Flash first and falls back to 3.6 or 3.5 Flash only when a model reports a
 quota-limit error.
 
+<img width="997" height="953" alt="image" src="https://github.com/user-attachments/assets/987bebbd-2396-4267-aa09-2f5736425593" />
+<img width="997" height="904" alt="image" src="https://github.com/user-attachments/assets/c03ed737-5c97-4ddd-a221-d2f1dd9708b3" />
+
+
 ## Run locally
 
 Requires Python 3.10 or newer, Node.js 20 or newer, npm, and a Gemini API key
