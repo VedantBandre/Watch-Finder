@@ -13,6 +13,7 @@ from threading import Lock
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from google.genai import errors
 from pydantic import ValidationError
@@ -37,6 +38,28 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="ChronoDesk Watch Analyzer", version="0.1.0")
+
+
+def _parse_cors_origins(value: str | None) -> list[str]:
+    """Parse exact browser origins from a comma-separated environment value."""
+    if not value:
+        return []
+    return [
+        origin.strip().rstrip("/")
+        for origin in value.split(",")
+        if origin.strip()
+    ]
+
+
+cors_origins = _parse_cors_origins(os.getenv("CORS_ORIGINS"))
+if cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
 
 _RETRY_DELAY_PATTERN = re.compile(
     r"retry\s+in\s+([0-9]+(?:\.[0-9]+)?)s",

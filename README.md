@@ -90,7 +90,65 @@ python -m unittest discover -v
 npm --prefix frontend run build
 ```
 
+## Optional hosted demo
+
+The `deploy/vercel-render` branch can host the frontend on Vercel Hobby and the
+FastAPI backend on a Render Free web service. Local development remains
+unchanged.
+
+### 1. Deploy the backend on Render
+
+1. Push this branch to GitHub.
+2. In Render, create a new Blueprint from the repository and select
+   `render.yaml`.
+3. Enter `GEMINI_API_KEY` when Render prompts for it.
+4. For the initial `CORS_ORIGINS` value, enter
+   `https://placeholder.invalid`. You will replace it after Vercel assigns the
+   frontend URL.
+5. Wait for the service to become healthy and copy its HTTPS URL, such as
+   `https://watch-finder-api.onrender.com`.
+
+The free Render service sleeps after 15 minutes without traffic. Its first
+request after sleeping can take about a minute while the service wakes up.
+
+### 2. Deploy the frontend on Vercel
+
+1. Import the same GitHub repository into Vercel.
+2. Select `deploy/vercel-render` as the production branch.
+3. Set the project Root Directory to `frontend`.
+4. Add the environment variable `VITE_API_BASE_URL` with the Render HTTPS URL,
+   without a trailing slash.
+5. Deploy and copy the production Vercel URL.
+
+### 3. Connect the two origins
+
+In the Render service settings, replace `CORS_ORIGINS` with the exact Vercel
+production origin, for example:
+
+```text
+https://your-watch-finder.vercel.app
+```
+
+Do not include a path or trailing slash. Save the setting and redeploy the
+backend. If you later add a custom domain, use a comma-separated list of exact
+origins:
+
+```text
+https://your-watch-finder.vercel.app,https://watches.example.com
+```
+
+Finally, open the Vercel site and run one watch analysis. A sleeping Render
+backend might require waiting and retrying once.
+
+### Public-demo safety
+
+The Gemini key remains server-side, but a public analysis endpoint can still
+consume its quota. Keep the demo online only while it is useful, monitor usage
+in Google AI Studio, and remove or rotate the deployment key afterward. Use a
+separate key for the demo rather than a key shared with other projects.
+
 ## Scope
 
-This is intentionally a local prototype: no login, database, persistent
-history, deployment, authentication claim, or price estimate.
+This is intentionally a small prototype: no login, database, persistent
+history, authentication claim, or price estimate. The hosted configuration is
+for a temporary demonstration rather than a production service.

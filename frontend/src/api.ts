@@ -5,6 +5,12 @@ import type {
   ModelUnavailable,
 } from "./types";
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
+function apiUrl(path: string): string {
+  return `${API_BASE_URL}${path}`;
+}
+
 export class WatchApiError extends Error {
   readonly code: string;
   readonly status: number;
@@ -28,7 +34,7 @@ export class WatchApiError extends Error {
 }
 
 export async function getModels(): Promise<ModelsResponse> {
-  const response = await fetch("/api/models");
+  const response = await fetch(apiUrl("/api/models"));
   if (!response.ok) {
     throw new WatchApiError("Could not load model availability.", "request_failed", response.status);
   }
@@ -46,7 +52,7 @@ export async function analyzeWatch(
 
   let response: Response;
   try {
-    response = await fetch("/api/analyze", {
+    response = await fetch(apiUrl("/api/analyze"), {
       method: "POST",
       body: form,
       signal,
@@ -56,7 +62,7 @@ export async function analyzeWatch(
       throw error;
     }
     throw new WatchApiError(
-      "Could not connect to the analysis service. Is the backend running?",
+      "Could not reach the analysis service. The free hosted backend may still be waking up; wait a minute and retry.",
       "connection_error",
       0,
     );

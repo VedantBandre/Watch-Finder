@@ -21,6 +21,7 @@ type RequestState = "idle" | "selected" | "analyzing" | "success" | "rate-limite
 
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const IS_HOSTED_DEMO = Boolean(import.meta.env.VITE_API_BASE_URL);
 
 function humanize(value: string): string {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -471,13 +472,20 @@ export default function App() {
             )}
 
             {file && state !== "rate-limited" && (
-              <button
-                className="button button--primary analyze-button"
-                disabled={state === "analyzing" || selectedUnavailable}
-                onClick={submitAnalysis}
-              >
-                {state === "analyzing" ? <><span className="spinner" /> Inspecting details…</> : "Analyze watch"}
-              </button>
+              <>
+                <button
+                  className="button button--primary analyze-button"
+                  disabled={state === "analyzing" || selectedUnavailable}
+                  onClick={submitAnalysis}
+                >
+                  {state === "analyzing" ? <><span className="spinner" /> Inspecting details…</> : "Analyze watch"}
+                </button>
+                {IS_HOSTED_DEMO && state === "analyzing" && (
+                  <p className="hosted-status" role="status">
+                    The free backend may take up to a minute to wake after inactivity.
+                  </p>
+                )}
+              </>
             )}
 
             {state === "rate-limited" && (

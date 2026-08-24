@@ -11,7 +11,7 @@ from google.genai import errors
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
 
-from backend.main import analysis_cache, app, model_availability
+from backend.main import _parse_cors_origins, analysis_cache, app, model_availability
 from backend.model_registry import MODEL_OPTIONS
 from backend.models import (
     Candidate,
@@ -82,6 +82,15 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+    async def test_cors_origin_parser_normalizes_exact_origins(self) -> None:
+        self.assertEqual(
+            _parse_cors_origins(
+                " https://watch-finder.vercel.app/,https://demo.example.com "
+            ),
+            ["https://watch-finder.vercel.app", "https://demo.example.com"],
+        )
+        self.assertEqual(_parse_cors_origins(None), [])
 
     async def test_models_lists_fallback_order(self) -> None:
         response = await self.client.get("/api/models")
